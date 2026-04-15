@@ -1,69 +1,100 @@
 import os
 
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from dotenv import load_dotenv
+from openai import OpenAI
 
-def model_download():
-    # 指定模型ID
-    model_id = "Qwen/Qwen1.5-0.5B-Chat"
 
-    # 指定下载路径
-    cache_dir = r"D:\hf_models"
-    os.makedirs(cache_dir, exist_ok=True)
+class HelloAgents:
+    """Simple OpenAI-compatible chat client wrapper."""
 
-    # 设置设备，优先使用GPU
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    def __init__(
+        self,
+        model: str = None,
+        apiKey: str = None,
+        baseUrl: str = None,
+        timeout: int = None,
+    ) -> None:
+        load_dotenv(dotenv_path=".env")
 
-    # 加载分词器
-    tokenizer = AutoTokenizer.from_pretrained(model_id,cache_dir=cache_dir)
+        self.model = model or os.getenv("MODELSCOPE_MODEL_ID")
+        apiKey = apiKey or os.getenv("MODELSCOPE_SDK_TOKEN")
+        baseUrl = baseUrl or os.getenv("MODELSCOPE_BASE_URL")
+        timeout = timeout or int(os.getenv("LLM_TIMEOUT", 60))
 
-    # 加载模型，并将其移动到指定设备
-    model = AutoModelForCausalLM.from_pretrained(model_id,cache_dir=cache_dir).to(device)
+        if not self.model:
+            raise ValueError("Missing model id")
+        if not apiKey:
+            raise ValueError("Missing API key")
+        if not baseUrl:
+            raise ValueError("Missing baseUrl")
 
-    print("模型和分词器加载完成！")
-    return tokenizer, model, device
+        self.client = OpenAI(api_key=apiKey, base_url=baseUrl, timeout=timeout)
 
-def token_msg_example(device):
-    # 准备对话输入
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "你好，请介绍你自己。"}
-    ]
+    def _normalize_messages(self, message):
+        if isinstance(message, str):
+            return [{"role": "user", "content": message}]
 
-    # 使用分词器的模板格式化输入
-    text = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True
-    )
+        if not isinstance(message, list):
+            raise ValueError("message must be a string or a list of chat messages")
 
-    # 编码输入文本
-    model_inputs = tokenizer([text], return_tensors="pt").to(device)
+        normalized_messages = []
+        for item in message:
+            if not isinstance(item, dict):
+                raise ValueError("each message must be a dict with role/content")
 
-    print("编码后的输入文本:")
-    print(model_inputs)
-    return model_inputs
+            role = str(item.get("role", "user")).strip().lower()
+            if role not in {"system", "user", "assistant", "tool"}:
+                raise ValueError(f"Unsupported message role: {item.get('role')}")
 
-def llm_response(tokenizer, model,model_inputs):
-    # 基于input生成output
-    generate_ids = model.generate(
-        model_inputs.input_ids,
-        max_new_tokens=512
-    )
+            normalized_messages.append(
+                {
+                    "role": role,
+                    "content": item.get("content", ""),
+                }
+            )
 
-    # 截断回答，只保留output部分
-    generate_ids = [
-        output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generate_ids)
-    ]
+        return normalized_messages
 
-    # 解码: token -> 人类文字
-    response = tokenizer.batch_decode(generate_ids, skip_special_tokens=True)[0]
+    def think(self, message, temperature: float = 0):
+        print(f"正在调用{self.model}模型")
 
-    print("\n模型的回答:")
-    print(response)
+        try:
+            normalized_messages = self._normalize_messages(message)
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=normalized_messages,
+                temperature=temperature,
+                stream=True,
+            )
+
+            print("模型调用成功")
+            collected_content = []
+            for chunk in response:
+                content = chunk.choices[0].delta.content or ""
+                print(content, end="", flush=True)
+                collected_content.append(content)
+
+            print()
+            return "".join(collected_content)
+        except Exception as e:
+            print(f"调用LLM API时发生错误: {e}")
+            return None
+
 
 if __name__ == "__main__":
-    tokenizer, model,device = model_download()
-    model_inputs = token_msg_example(device=device)
-    llm_response(tokenizer, model,model_inputs)
-    
+    try:
+        client = HelloAgents()
+
+        exampleMessage = [
+            {"role": "system", "content": "You are a helpful assistant for Python code."},
+            {"role": "user", "content": "写一个简单的递归逻辑"},
+        ]
+
+        print("--- 调用LLM ---")
+        responseText = client.think(exampleMessage)
+        if responseText:
+            print("\n\n--- 模型输出 ---")
+            print(responseText)
+
+    except ValueError as e:
+        print(e)

@@ -1,10 +1,12 @@
 import os
 from pathlib import Path
 
-from openai import OpenAI
+from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
 
 
 DEFAULT_AIHUBMIX_BASE_URL = "https://aihubmix.com/v1"
+DEFAULT_TIMEOUT_SECONDS = 120.0
+DEFAULT_MAX_RETRIES = 2
 
 
 def load_local_env(env_file: str = ".env") -> None:
@@ -32,12 +34,23 @@ class OpenAICompatibleClient:
         model: str | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
+        timeout: float | None = None,
+        max_retries: int | None = None,
     ) -> None:
         load_local_env()
 
         self.model = model or os.getenv("AIHUBMIX_MODEL") or "gpt-4o-mini"
         api_key = api_key or os.getenv("AIHUBMIX_API_KEY") or os.getenv("OPENAI_API_KEY")
         base_url = base_url or os.getenv("AIHUBMIX_BASE_URL") or DEFAULT_AIHUBMIX_BASE_URL
+        timeout = timeout or float(
+            os.getenv("OPENAI_TIMEOUT")
+            or os.getenv("LLM_TIMEOUT")
+            or DEFAULT_TIMEOUT_SECONDS
+        )
+        max_retries = max_retries if max_retries is not None else int(
+            os.getenv("OPENAI_MAX_RETRIES")
+            or DEFAULT_MAX_RETRIES
+        )
 
         if not api_key:
             raise ValueError(
@@ -45,11 +58,22 @@ class OpenAICompatibleClient:
                 "or pass api_key when creating OpenAICompatibleClient."
             )
 
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.base_url = base_url
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
 
     def generate(self, prompt: str, system_prompt: str) -> str:
         """Call the chat completions API and return plain text."""
-        print("Calling model...")
+        print(
+            f"Calling model '{self.model}' via {self.base_url} "
+            f"(timeout={self.timeout}s, retries={self.max_retries})..."
+        )
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -62,6 +86,27 @@ class OpenAICompatibleClient:
             answer = response.choices[0].message.content or ""
             print("Model response received.")
             return answer
+        except APITimeoutError:
+            print(
+                "LLM API timeout: the request exceeded the configured timeout. "
+                "Try increasing OPENAI_TIMEOUT/LLM_TIMEOUT in .env or check the upstream service."
+            )
+            return (
+                "Error: the language model request timed out. "
+                "Increase OPENAI_TIMEOUT (or LLM_TIMEOUT) in .env and retry."
+            )
+        except APIConnectionError as exc:
+            print(f"LLM API connection error: {exc}")
+            return (
+                "Error: failed to connect to the language model service. "
+                "Check your network, API base URL, and upstream availability."
+            )
+        except APIStatusError as exc:
+            print(f"LLM API status error ({exc.status_code}): {exc}")
+            return (
+                f"Error: the language model service returned HTTP {exc.status_code}. "
+                "Check the API key, model name, and upstream service status."
+            )
         except Exception as exc:
-            print(f"LLM API error: {exc}")
+            print(f"LLM API error: {type(exc).__name__}: {exc}")
             return "Error: failed to call the language model service."
