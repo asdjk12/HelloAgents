@@ -114,6 +114,8 @@ def main():
     API_KEY = os.getenv('AIHUBMIX_API_KEY')
     AIHUBMIX_BASE_URL = os.getenv("AIHUBMIX_BASE_URL")
     MODEL_ID = os.getenv("AIHUBMIX_MODEL")
+    OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT") or os.getenv("LLM_TIMEOUT") or 120)
+    OPENAI_MAX_RETRIES = int(os.getenv("OPENAI_MAX_RETRIES") or 2)
 
     # 将所有工具函数放入一个字典，方便后续调用
     available_tools = {
@@ -124,7 +126,9 @@ def main():
     llm = OpenAICompatibleClient(
         model=MODEL_ID,
         api_key=API_KEY,
-        base_url=AIHUBMIX_BASE_URL
+        base_url=AIHUBMIX_BASE_URL,
+        timeout=OPENAI_TIMEOUT,
+        max_retries=OPENAI_MAX_RETRIES,
     )
 
     # --- 2. 初始化 ---
