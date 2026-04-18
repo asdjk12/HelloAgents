@@ -35,20 +35,6 @@ class ToolExecutor:
             for info in self.tool_list.values()
         )
 
-
-def _stringify_answer_box_list(items: list[Any]) -> str:
-    lines = []
-    for item in items:
-        if isinstance(item, dict):
-            text = item.get("answer") or item.get("snippet") or item.get("title") or str(item)
-        else:
-            text = str(item)
-
-        if text:
-            lines.append(text)
-
-    return "\n".join(lines)
-
 # -------------------------- Tools -------------------------- 
 def search(query: str) -> str:
     """基于 SerpAPI 搜索网站、商品或一般网页内容。"""
@@ -103,7 +89,7 @@ if __name__ == "__main__":
     # 注册检测
     print(toolExecutor.getAvailableTools())
 
-    search_query = "英伟达最新的GPU是什么?有多强？"
+    search_query = "英伟达最新的GPU是什么？"
     tool_name = "Search"
 
     func = toolExecutor.getTool(name=tool_name)
