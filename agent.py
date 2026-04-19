@@ -2,9 +2,10 @@ import re
 from dataclasses import dataclass
 
 from llm import HelloAgents
-from prompt import REACT_PROMPT_TEMPLATE
+from prompt import *
 from tool import ToolExecutor, search
 from datetime import date
+import ast
 
 ACTION_PATTERN = re.compile(r"([A-Za-z_]\w*)\[(.*)\]", re.DOTALL)
 FINISH_PATTERN = re.compile(r"Finish\[(.*)\]", re.DOTALL)
@@ -179,11 +180,110 @@ class ReActAgent:
     def _looks_like_protocol_label(self, line: str) -> bool:
         return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_ ]*:\s*", line))
 
+# Plan & Solve
+class Planner():
+    def __init__(self, client:HelloAgents) -> None:
+        self.client = client
+
+    def plan(self, question):
+        # 初始化prompt
+        prompt = PLANNER_PROMPT_TEMPLATE.format(question = question)
+
+        # 初始化message
+        message = [{"role": "user", "content": prompt}]
+
+        
+        
+        # 调用llm进行提问
+        print("正在进行planner的任务拆分~")      # 拆分
+        response_text= self.client.think(message=message)
+        print("任务拆分完成~")
+
+        # 解析LLM输出的列表字符串
+        try:
+            # 找到```python和```之间的内容
+            plan_str = response_text.split("```python")[1].split("```")[0].strip()
+            # 使用ast.literal_eval来安全地执行字符串，将其转换为Python列表
+            plan = ast.literal_eval(plan_str)
+            return plan if isinstance(plan, list) else []
+        except (ValueError, SyntaxError, IndexError) as e:
+            print(f"❌ 解析计划时出错: {e}")
+            print(f"原始响应: {response_text}")
+            return []
+        except Exception as e:
+            print(f"❌ 解析计划时发生未知错误: {e}")
+            return []
+    
+class Executor():
+    def __init__(self, client:HelloAgents) -> None:
+        self.client = client
+    
+    def execute(self, plan, question):
+        history= ""
+        response = None
+
+        for step,task in enumerate(plan):   # step: 1/2/3... && task: sub-tasks
+            # 追踪记录
+            print(f"这是第{step}步")
+            
+            prompt = EXECUTOR_PROMPT_TEMPLATE.format(
+                question = question,
+                plan =  plan,
+                history = history,
+                current_step= task
+            )
+
+            message = [{"role":"user", "content": prompt}]
+            
+            # 运行model
+            print("运行模型: ")
+            response = self.client.think(message=message)
+            print("回答已生成！")
+
+            history += f"步骤 {step+1}: {task}\n结果: {response}\n\n"
+            print(f"步骤 {step+1} 已完成，结果: {response}")
+
+        # 循环结束后，最后一步的响应就是最终答案
+        final_answer = response
+        return final_answer
+
+class PlanAndSolveAgent:
+    def __init__(self, llm_client):
+        """
+        初始化智能体，同时创建规划器和执行器实例。
+        """
+        self.llm_client = llm_client
+        self.planner = Planner(self.llm_client)
+        self.executor = Executor(self.llm_client)
+
+    def run(self, question: str):
+        """
+        运行智能体的完整流程:先规划，后执行。
+        """
+        print(f"\n--- 开始处理问题 ---\n问题: {question}")
+        
+        # 1. 调用规划器生成计划
+        plan = self.planner.plan(question)
+        
+        # 检查计划是否成功生成
+        if not plan:
+            print("\n--- 任务终止 --- \n无法生成有效的行动计划。")
+            return
+
+        # 2. 调用执行器执行计划
+        final_answer = self.executor.execute(plan, question)
+        
+        print(f"\n--- 任务完成 ---\n最终答案: {final_answer}")
+
+            
+
 
 if __name__ == "__main__":
     client = HelloAgents()
-    tool_executor = ToolExecutor()
 
+    """
+    # ReAct
+    tool_executor = ToolExecutor()
     tool_executor.ToolRegister(
         tool_name="Search",
         description="基于serpAPI搜索网站/商品等内容",
@@ -196,3 +296,9 @@ if __name__ == "__main__":
         question="iphone公司最新的手机是什么? 在旧版本的基础上提升/新增了什么功能？"
     )
     print(response)
+    """
+
+    # Plan && Solve
+    P_S = PlanAndSolveAgent(llm_client=client)
+    question = "一个水果店周一卖出了15个苹果。周二卖出的苹果数量是周一的两倍。周三卖出的数量比周二少了5个。请问这三天总共卖出了多少个苹果？"
+    P_S.run(question)
